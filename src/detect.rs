@@ -18,7 +18,7 @@ pub struct EdidInfo {
     pub preferred_mode: Option<VideoMode>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct VideoMode {
     pub width: u32,
     pub height: u32,
@@ -235,4 +235,142 @@ fn read_modes(path: &Path) -> Vec<VideoMode> {
         }
     }
     modes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_edid(vendor_high: u8, vendor_low: u8, serial: u32, model_name: Option<&str>, timing: Option<(u16, u32, u32, u32, u32)>) -> Vec<u8> {
+        let mut data = vec![0u8; 128];
+        // Header
+        data[0..8].copy_from_slice(&[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
+        // Manufacturer ID
+        data[8] = vendor_high;
+        data[9] = vendor_low;
+        // Serial number (LE)
+        let ser = serial.to_le_bytes();
+        data[12..16].copy_from_slice(&ser);
+        // Display size in cm
+        data[21] = 71;
+        data[22] = 40;
+        // Version
+        data[18] = 1;
+        data[19] = 3;
+
+        // Descriptor 1: detailed timing (if provided), otherwise monitor name
+        let d1_start = 54;
+        if let Some((pclk, ha, hbl, va, vbl)) = timing {
+            let pclk_bytes = pclk.to_le_bytes();
+            data[d1_start..d1_start + 2].copy_from_slice(&pclk_bytes);
+            data[d1_start + 2] = (ha & 0xFF) as u8;
+            data[d1_start + 3] = (hbl & 0xFF) as u8;
+            data[d1_start + 4] = (((ha >> 8) & 0x0F) << 4) as u8 | ((hbl >> 8) & 0x0F) as u8;
+            data[d1_start + 5] = (va & 0xFF) as u8;
+            data[d1_start + 6] = (vbl & 0xFF) as u8;
+            data[d1_start + 7] = (((va >> 8) & 0x0F) << 4) as u8 | ((vbl >> 8) & 0x0F) as u8;
+            // Minimal remaining bytes for timing descriptor
+            data[d1_start + 8..d1_start + 18].fill(0x20);
+        }
+
+        // Descriptor 2: monitor name (if provided)
+        if let Some(name) = model_name {
+            let d2_start = if timing.is_some() { 72 } else { 54 };
+            data[d2_start + 3] = 0xFC; // Monitor name tag
+            let name_bytes = name.as_bytes();
+            let fill_len = name_bytes.len().min(13);
+            data[d2_start + 5..d2_start + 5 + fill_len].copy_from_slice(&name_bytes[..fill_len]);
+            if fill_len < 13 {
+                data[d2_start + 5 + fill_len] = 0x0A; // newline terminator
+            }
+        }
+
+        data
+    }
+
+    #[test]
+    fn edid_parse_vendor() {
+        // "IOC": I=9, O=15, C=3 -> (9<<10)|(15<<5)|3 = 9216+480+3 = 9699
+        // be bytes: 9699 >> 8 = 37, 9699 & 0xFF = 227
+        let data = make_edid(37, 227, 0, None, None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.vendor.as_deref(), Some("IOC"));
+    }
+
+    #[test]
+    fn edid_parse_dell_vendor() {
+        // "DEL": D=4, E=5, L=12 -> (4<<10)|(5<<5)|12 = 4096+160+12 = 4268
+        // be bytes: 4268 >> 8 = 16, 4268 & 0xFF = 172
+        let data = make_edid(16, 172, 0, None, None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.vendor.as_deref(), Some("DEL"));
+    }
+
+    #[test]
+    fn edid_parse_serial() {
+        let data = make_edid(0, 0, 0x12345678, None, None);
+        let edid = parse_edid(&data).unwrap();
+        // 0x12345678 = 305419896 in decimal
+        assert_eq!(edid.serial.as_deref(), Some("305419896"));
+    }
+
+    #[test]
+    fn edid_parse_zero_serial_is_none() {
+        let data = make_edid(0, 0, 0, None, None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.serial, None);
+    }
+
+    #[test]
+    fn edid_parse_model_name() {
+        let data = make_edid(0, 0, 0, Some("32M2V"), None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.model.as_deref(), Some("32M2V"));
+    }
+
+    #[test]
+    fn edid_parse_display_size() {
+        let data = make_edid(0, 0, 0, None, None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.display_size_mm, Some((71, 40)));
+    }
+
+    #[test]
+    fn edid_parse_preferred_timing_1080p60() {
+        // 1920x1080@60: pclk=14850 (148.5MHz), ha=1920, hbl=280, va=1080, vbl=45
+        let data = make_edid(0, 0, 0, Some("1080p"), Some((14850, 1920, 280, 1080, 45)));
+        let edid = parse_edid(&data).unwrap();
+        let mode = edid.preferred_mode.unwrap();
+        assert_eq!(mode.width, 1920);
+        assert_eq!(mode.height, 1080);
+        assert!((mode.refresh - 60.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn edid_parse_rejects_wrong_header() {
+        let mut data = vec![0u8; 128];
+        data[0] = 0xFF; // wrong header
+        assert!(parse_edid(&data).is_none());
+    }
+
+    #[test]
+    fn edid_parse_rejects_short_data() {
+        let data = vec![0u8; 64];
+        assert!(parse_edid(&data).is_none());
+    }
+
+    #[test]
+    fn edid_parse_no_model_without_descriptor() {
+        let data = make_edid(0, 0, 0, None, None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.model, None);
+    }
+
+    #[test]
+    fn edid_parse_no_preferred_mode_without_timing() {
+        let data = make_edid(0, 0, 0, Some("Test"), None);
+        let edid = parse_edid(&data).unwrap();
+        assert_eq!(edid.preferred_mode, None);
+        assert_eq!(edid.model.as_deref(), Some("Test"));
+    }
 }

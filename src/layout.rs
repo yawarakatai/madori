@@ -208,3 +208,290 @@ fn get_mode_for_monitor(
         .find(|c| c.name == connector_name)
         .and_then(|c| c.modes.first().cloned())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{MatchBy, MonitorDefinition, LayoutSpec as CfgLayoutSpec, Rule as CfgRule};
+
+    impl CfgRule {
+        fn new(
+            match_patterns: Vec<&str>,
+            layout: Option<HashMap<String, CfgLayoutSpec>>,
+            virtual_output: Option<crate::config::VirtualSpec>,
+        ) -> Self {
+            crate::config::Rule {
+                match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
+                layout,
+                virtual_output,
+            }
+        }
+    }
+
+    fn conn(name: &str, modes: Vec<(u32, u32)>) -> ConnectorInfo {
+        ConnectorInfo {
+            name: name.to_string(),
+            connected: true,
+            edid: None,
+            modes: modes
+                .into_iter()
+                .map(|(w, h)| VideoMode { width: w, height: h, refresh: 60.0 })
+                .collect(),
+        }
+    }
+
+    fn ls(pos: &str) -> CfgLayoutSpec {
+        CfgLayoutSpec { position: Some(pos.to_string()), scale: None, transform: None, mirror: None }
+    }
+
+    #[test]
+    fn manual_position_single_monitor() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        let m = &resolved.monitors[0];
+        assert_eq!(m.monitor_name, "ally");
+        assert_eq!(m.x, 0);
+        assert_eq!(m.y, 0);
+    }
+
+    #[test]
+    fn manual_position_custom_coords() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["innocn"],
+            Some(HashMap::from([("innocn".into(), ls("1920,50"))])),
+            None,
+        );
+        let matched = HashMap::from([("HDMI-A-1".into(), "innocn".to_string())]);
+        let connectors = vec![conn("HDMI-A-1", vec![(3840, 2160)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert_eq!(resolved.monitors[0].x, 1920);
+        assert_eq!(resolved.monitors[0].y, 50);
+    }
+
+    #[test]
+    fn auto_position_packs_left_to_right() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally", "innocn"],
+            Some(HashMap::from([
+                ("ally".into(), ls("0,0")),
+                ("innocn".into(), ls("auto,0")),
+            ])),
+            None,
+        );
+        let matched = HashMap::from([
+            ("eDP-1".into(), "ally".to_string()),
+            ("HDMI-A-1".into(), "innocn".to_string()),
+        ]);
+        // eDP-1 has width 1920 / scale 1.0 = 1920
+        let connectors = vec![
+            conn("eDP-1", vec![(1920, 1080)]),
+            conn("HDMI-A-1", vec![(3840, 2160)]),
+        ];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        let ally = resolved.monitors.iter().find(|m| m.monitor_name == "ally").unwrap();
+        let innocn = resolved.monitors.iter().find(|m| m.monitor_name == "innocn").unwrap();
+        assert_eq!((ally.x, ally.y), (0, 0));
+        assert_eq!(innocn.x, 1920); // right edge of ally
+        assert_eq!(innocn.y, 0);
+    }
+
+    #[test]
+    fn auto_position_respects_custom_y() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally", "innocn"],
+            Some(HashMap::from([
+                ("ally".into(), ls("0,0")),
+                ("innocn".into(), ls("auto,100")),
+            ])),
+            None,
+        );
+        let matched = HashMap::from([
+            ("eDP-1".into(), "ally".to_string()),
+            ("HDMI-A-1".into(), "innocn".to_string()),
+        ]);
+        let connectors = vec![
+            conn("eDP-1", vec![(1920, 1080)]),
+            conn("HDMI-A-1", vec![(3840, 2160)]),
+        ];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        let innocn = resolved.monitors.iter().find(|m| m.monitor_name == "innocn").unwrap();
+        assert_eq!(innocn.y, 100);
+    }
+
+    #[test]
+    fn scale_inherits_from_monitor_definition() {
+        let config = Config {
+            monitors: HashMap::from([(
+                "ally".into(),
+                MonitorDefinition {
+                    match_by: MatchBy { connector: None, model: None, vendor: None, serial: None },
+                    scale: Some(1.5),
+                },
+            )]),
+            rules: vec![],
+        };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert_eq!(resolved.monitors[0].scale, 1.5);
+    }
+
+    #[test]
+    fn layout_scale_overrides_monitor_definition() {
+        let config = Config {
+            monitors: HashMap::from([(
+                "ally".into(),
+                MonitorDefinition {
+                    match_by: MatchBy { connector: None, model: None, vendor: None, serial: None },
+                    scale: Some(1.5),
+                },
+            )]),
+            rules: vec![],
+        };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), {
+                let mut l = ls("0,0");
+                l.scale = Some(2.0);
+                l
+            })])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert_eq!(resolved.monitors[0].scale, 2.0);
+    }
+
+    #[test]
+    fn default_scale_is_one() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert_eq!(resolved.monitors[0].scale, 1.0);
+    }
+
+    #[test]
+    fn default_transform_is_normal() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert_eq!(resolved.monitors[0].transform, "normal");
+    }
+
+    #[test]
+    fn transform_passed_through() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), {
+                let mut l = ls("0,0");
+                l.transform = Some("right".into());
+                l
+            })])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert_eq!(resolved.monitors[0].transform, "right");
+    }
+
+    #[test]
+    fn mirror_assignment() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally", "_"],
+            Some(HashMap::from([
+                ("ally".into(), ls("0,0")),
+                ("$1".into(), {
+                    let mut l = ls("0,0");
+                    l.mirror = Some("ally".into());
+                    l
+                }),
+            ])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![
+            conn("eDP-1", vec![(1920, 1080)]),
+            conn("HDMI-A-1", vec![(1920, 1080)]),
+        ];
+        let wildcards = HashMap::from([("$1".into(), "HDMI-A-1".to_string())]);
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &wildcards);
+        let mirror_monitor = resolved.monitors.iter().find(|m| m.monitor_name == "$1").unwrap();
+        assert_eq!(mirror_monitor.mirror.as_deref(), Some("ally"));
+        assert_eq!(mirror_monitor.connector_name, "HDMI-A-1");
+    }
+
+    #[test]
+    fn virtual_output_passed_through() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["*"],
+            None,
+            Some(crate::config::VirtualSpec { width: 1920, height: 1080, refresh: 60.0 }),
+        );
+        let resolved = resolve_layout(&config, &rule, &HashMap::new(), &[], &HashMap::new());
+        let v = resolved.virtual_output.unwrap();
+        assert_eq!(v.width, 1920);
+        assert_eq!(v.height, 1080);
+        assert_eq!(v.refresh, 60.0);
+    }
+
+    #[test]
+    fn no_virtual_when_rule_has_none() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let resolved = resolve_layout(&config, &rule, &HashMap::new(), &[], &HashMap::new());
+        assert!(resolved.virtual_output.is_none());
+    }
+
+    #[test]
+    fn resolve_connector_from_matched() {
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        assert_eq!(resolve_connector("ally", &matched, &HashMap::new()), "eDP-1");
+    }
+
+    #[test]
+    fn resolve_connector_from_wildcard() {
+        let wildcards = HashMap::from([("$1".into(), "HDMI-A-1".to_string())]);
+        assert_eq!(resolve_connector("$1", &HashMap::new(), &wildcards), "HDMI-A-1");
+    }
+
+    #[test]
+    fn resolve_connector_fallback_to_name() {
+        assert_eq!(resolve_connector("unknown", &HashMap::new(), &HashMap::new()), "unknown");
+    }
+}

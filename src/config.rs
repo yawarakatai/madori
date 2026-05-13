@@ -68,3 +68,123 @@ impl Config {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_minimal_config() {
+        let json = r#"{
+            "monitors": {},
+            "rules": []
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.monitors.is_empty());
+        assert!(config.rules.is_empty());
+    }
+
+    #[test]
+    fn parse_monitor_full() {
+        let json = r#"{
+            "monitors": {
+                "ally": {
+                    "matchBy": {
+                        "connector": "eDP-1",
+                        "model": "B140HAN",
+                        "vendor": "BOE",
+                        "serial": "0x00000001"
+                    },
+                    "scale": 1.5
+                }
+            },
+            "rules": []
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let m = &config.monitors["ally"];
+        assert_eq!(m.match_by.connector.as_deref(), Some("eDP-1"));
+        assert_eq!(m.match_by.model.as_deref(), Some("B140HAN"));
+        assert_eq!(m.match_by.vendor.as_deref(), Some("BOE"));
+        assert_eq!(m.match_by.serial.as_deref(), Some("0x00000001"));
+        assert_eq!(m.scale, Some(1.5));
+    }
+
+    #[test]
+    fn parse_monitor_minimal() {
+        let json = r#"{
+            "monitors": {
+                "ally": { "matchBy": {} }
+            },
+            "rules": []
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let m = &config.monitors["ally"];
+        assert!(m.match_by.connector.is_none());
+        assert!(m.match_by.model.is_none());
+        assert!(m.match_by.vendor.is_none());
+        assert!(m.match_by.serial.is_none());
+        assert!(m.scale.is_none());
+    }
+
+    #[test]
+    fn parse_rule_with_layout_and_virtual() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [
+                {
+                    "match": ["ally", "innocn"],
+                    "layout": {
+                        "ally": { "position": "0,0", "scale": 1.5 },
+                        "innocn": { "position": "auto,0", "scale": 1.0 }
+                    }
+                },
+                {
+                    "match": ["*"],
+                    "virtual": { "width": 1920, "height": 1080, "refresh": 60 }
+                }
+            ]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.rules.len(), 2);
+        assert_eq!(config.rules[0].match_patterns, vec!["ally", "innocn"]);
+        let layout = config.rules[0].layout.as_ref().unwrap();
+        assert_eq!(layout["ally"].scale, Some(1.5));
+        let v = config.rules[1].virtual_output.as_ref().unwrap();
+        assert_eq!(v.width, 1920);
+        assert_eq!(v.height, 1080);
+        assert_eq!(v.refresh, 60.0);
+    }
+
+    #[test]
+    fn parse_virtual_default_refresh() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["*"], "virtual": { "width": 1280, "height": 720 } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let v = config.rules[0].virtual_output.as_ref().unwrap();
+        assert_eq!(v.refresh, 60.0);
+    }
+
+    #[test]
+    fn parse_layout_with_mirror() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["ally", "_"], "layout": { "ally": { "position": "0,0" }, "$1": { "mirror": "ally" } } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let layout = config.rules[0].layout.as_ref().unwrap();
+        assert_eq!(layout["$1"].mirror.as_deref(), Some("ally"));
+    }
+
+    #[test]
+    fn parse_layout_with_transform() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["ally"], "layout": { "ally": { "position": "0,0", "transform": "right" } } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let layout = config.rules[0].layout.as_ref().unwrap();
+        assert_eq!(layout["ally"].transform.as_deref(), Some("right"));
+    }
+}
