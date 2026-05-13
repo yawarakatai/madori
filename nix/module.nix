@@ -1,0 +1,60 @@
+{ config, lib, pkgs, ... }:
+
+let
+  cfg = config.services.madori;
+  inherit (lib) mkEnableOption mkOption types;
+in
+{
+  options.services.madori = {
+    enable = mkEnableOption "madori display layout daemon";
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.madori or (throw "madori package not found. Set services.madori.package or add madori to pkgs.");
+      description = "The madori package to use";
+    };
+
+    monitors = mkOption {
+      type = types.attrs;
+      default = { };
+      description = "Monitor definitions (attrset of name -> { matchBy, scale? })";
+    };
+
+    rules = mkOption {
+      type = types.listOf types.attrs;
+      default = [ ];
+      description = "Ordered list of match rules";
+    };
+
+    configPath = mkOption {
+      type = types.path;
+      default = "/etc/madori/config.json";
+      description = "Path to generated config.json";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    environment.etc."madori/config.json" = {
+      text = builtins.toJSON {
+        monitors = cfg.monitors;
+        rules = cfg.rules;
+      };
+      mode = "0444";
+    };
+
+    environment.systemPackages = [ cfg.package ];
+
+    systemd.user.services.madori = {
+      description = "madori display layout daemon";
+      after = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
+      wantedBy = [ "graphical-session.target" ];
+
+      serviceConfig = {
+        ExecStart = "${cfg.package}/bin/madori daemon";
+        Restart = "on-failure";
+        RestartSec = 5;
+      };
+    };
+  };
+}
