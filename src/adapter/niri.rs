@@ -11,7 +11,11 @@ impl Adapter for NiriAdapter {
     }
 
     fn apply(&self, layout: &ResolvedLayout) -> Result<(), Box<dyn std::error::Error>> {
-        // Apply virtual output first if present
+        if !check_binary("niri") {
+            warn!("niri not found in PATH; skipping application");
+            return Ok(());
+        }
+
         if let Some(ref v) = layout.virtual_output {
             self.apply_virtual_output(v)?;
         }
@@ -33,7 +37,6 @@ impl Adapter for NiriAdapter {
                 continue;
             }
 
-            // Set mode (preferred mode closest to desired refresh)
             if let Some(ref mode) = monitor.mode {
                 let _ = niri_msg(&["output", conn, "mode",
                     &mode.width.to_string(),
@@ -42,7 +45,6 @@ impl Adapter for NiriAdapter {
                 ]);
             }
 
-            // Set position
             let _ = niri_msg(&[
                 "output",
                 conn,
@@ -51,10 +53,8 @@ impl Adapter for NiriAdapter {
                 &monitor.y.to_string(),
             ]);
 
-            // Set scale
             let _ = niri_msg(&["output", conn, "scale", &format!("{:.3}", monitor.scale)]);
 
-            // Set transform
             if monitor.transform != "normal" {
                 let niri_transform = match monitor.transform.as_str() {
                     "left" => "90",
@@ -109,4 +109,11 @@ fn niri_msg(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn check_binary(name: &str) -> bool {
+    match std::process::Command::new("which").arg(name).output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
 }

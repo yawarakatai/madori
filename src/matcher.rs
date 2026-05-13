@@ -85,18 +85,29 @@ pub fn match_rules(
 
         // Handle catch-all "*"
         if patterns.len() == 1 && patterns[0] == "*" {
-            // Only match catch-all if no other rule could match.
-            // Actually, spec says first match wins. If we're the first rule and
-            // no others match, we match. But since we evaluate top-to-bottom,
-            // we'll check this only at the correct position.
             return Some((i, rule.clone()));
         }
 
-        // Count wildcards in patterns (exclude $N references)
+        // Check negation patterns first: !name must NOT be connected
+        let mut negation_ok = true;
+        for pat in patterns {
+            if let Some(stripped) = pat.strip_prefix('!') {
+                let s = stripped.to_string();
+                if known_names.contains(&&s) {
+                    negation_ok = false;
+                    break;
+                }
+            }
+        }
+        if !negation_ok {
+            continue;
+        }
+
+        // Count wildcards in patterns (exclude $N references and !negations)
         let wildcard_count = patterns.iter().filter(|p| p.as_str() == "_").count();
         let known_spec_count = patterns
             .iter()
-            .filter(|p| p.as_str() != "_" && p.as_str() != "*" && !p.starts_with('$'))
+            .filter(|p| p.as_str() != "_" && p.as_str() != "*" && !p.starts_with('$') && !p.starts_with('!'))
             .count();
 
         // Must have enough connected monitors to satisfy known + wildcards
@@ -113,6 +124,10 @@ pub fn match_rules(
             }
             if pat.starts_with('$') {
                 // Reference to a wildcard, resolve later
+                continue;
+            }
+            if pat.starts_with('!') {
+                // Negation already checked above
                 continue;
             }
             // Literal monitor name - must be present
@@ -144,7 +159,7 @@ pub fn match_rules(
         // More precise check: count how many matched monitors aren't referenced in patterns
         let referenced_known: Vec<&String> = patterns
             .iter()
-            .filter(|p| p.as_str() != "_" && p.as_str() != "*" && !p.starts_with('$'))
+            .filter(|p| p.as_str() != "_" && p.as_str() != "*" && !p.starts_with('$') && !p.starts_with('!'))
             .collect();
         let extra_known = known_names.len() - referenced_known.len();
         if wildcard_count < extra_known {
@@ -174,7 +189,7 @@ pub fn resolve_wildcards(
     let named_in_pattern: Vec<&String> = rule
         .match_patterns
         .iter()
-        .filter(|p| p.as_str() != "_" && p.as_str() != "*" && !p.starts_with('$'))
+        .filter(|p| p.as_str() != "_" && p.as_str() != "*" && !p.starts_with('$') && !p.starts_with('!'))
         .collect();
 
     let extra_known: Vec<&String> = known_names
@@ -193,6 +208,9 @@ pub fn resolve_wildcards(
 
     let mut wi = 0;
     for pat in &rule.match_patterns {
+        if pat.starts_with('!') {
+            continue;
+        }
         if pat == "_" {
             // Try extra_connectors first, then wildcard_connectors
             let conn = if wi < extra_connectors.len() {
@@ -402,6 +420,8 @@ mod tests {
             match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
             layout,
             virtual_output,
+            pre_hook: None,
+            post_hook: None,
         }
     }
 
@@ -529,5 +549,60 @@ mod tests {
         ];
         let assignments = resolve_wildcards(&rule, &matched, &connectors);
         assert_eq!(assignments.get("$1"), Some(&"HDMI-A-1".to_string()));
+    }
+
+    // -- negation tests (!name) --
+
+    #[test]
+    fn negation_excludes_when_monitor_connected() {
+        let rules = vec![mk_rule(vec!["ally", "!innocn"], None, None)];
+        let matched = HashMap::from([
+            ("eDP-1".into(), "ally".to_string()),
+            ("HDMI-A-1".into(), "innocn".to_string()),
+        ]);
+        let connectors = vec![
+            conn("eDP-1", true, None, None, None),
+            conn("HDMI-A-1", true, None, None, None),
+        ];
+        assert!(match_rules(&rules, &matched, &connectors).is_none());
+    }
+
+    #[test]
+    fn negation_matches_when_monitor_absent() {
+        let rules = vec![mk_rule(vec!["ally", "!innocn"], None, None)];
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![
+            conn("eDP-1", true, None, None, None),
+        ];
+        assert!(match_rules(&rules, &matched, &connectors).is_some());
+    }
+
+    #[test]
+    fn negation_does_not_consume_count() {
+        // !innocn should not count as a required monitor
+        let rules = vec![mk_rule(vec!["ally", "!innocn"], None, None)];
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", true, None, None, None)];
+        assert!(match_rules(&rules, &matched, &connectors).is_some());
+    }
+
+    #[test]
+    fn negation_only_works_with_positive_match() {
+        // ally is not connected, so rule should not match despite !innocn
+        let rules = vec![mk_rule(vec!["ally", "!innocn"], None, None)];
+        let matched = HashMap::from([("HDMI-A-1".into(), "innocn".to_string())]);
+        let connectors = vec![conn("HDMI-A-1", true, None, None, None)];
+        assert!(match_rules(&rules, &matched, &connectors).is_none());
+    }
+
+    #[test]
+    fn negation_with_wildcard() {
+        let rules = vec![mk_rule(vec!["ally", "_", "!innocn"], None, None)];
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![
+            conn("eDP-1", true, None, None, None),
+            conn("DP-1", true, None, None, None), // extra unknown
+        ];
+        assert!(match_rules(&rules, &matched, &connectors).is_some());
     }
 }

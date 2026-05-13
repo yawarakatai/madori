@@ -11,6 +11,11 @@ impl Adapter for KdeAdapter {
     }
 
     fn apply(&self, layout: &ResolvedLayout) -> Result<(), Box<dyn std::error::Error>> {
+        if !check_binary("kscreen-doctor") {
+            warn!("kscreen-doctor not found in PATH; skipping application");
+            return Ok(());
+        }
+
         if let Some(ref v) = layout.virtual_output {
             warn!(
                 "Virtual output on KDE: creating virtual monitor {}x{}@{}",
@@ -39,25 +44,19 @@ impl Adapter for KdeAdapter {
                     .map(|m| m.connector_name.as_str())
                     .unwrap_or(mirror_target.as_str());
                 let _ = kscreen_doctor(&[&format!(
-                    "output.{}.replicate.{}",
-                    conn, target_conn
+                    "output.{}.replicate.{}", conn, target_conn
                 )]);
                 continue;
             }
 
-            // Position
             let _ = kscreen_doctor(&[&format!(
-                "output.{}.position.{},{}",
-                conn, monitor.x, monitor.y
+                "output.{}.position.{},{}", conn, monitor.x, monitor.y
             )]);
 
-            // Scale
             let _ = kscreen_doctor(&[&format!(
-                "output.{}.scale.{}",
-                conn, monitor.scale
+                "output.{}.scale.{}", conn, monitor.scale
             )]);
 
-            // Rotation
             if monitor.transform != "normal" {
                 let rotation = match monitor.transform.as_str() {
                     "left" => "left",
@@ -65,11 +64,9 @@ impl Adapter for KdeAdapter {
                     "inverted" => "inverted",
                     _ => "normal",
                 };
-                let _ =
-                    kscreen_doctor(&[&format!("output.{}.rotation.{}", conn, rotation)]);
+                let _ = kscreen_doctor(&[&format!("output.{}.rotation.{}", conn, rotation)]);
             }
 
-            // Mode
             if let Some(ref mode) = monitor.mode {
                 let _ = kscreen_doctor(&[&format!(
                     "output.{}.mode.{}x{}@{}",
@@ -77,7 +74,6 @@ impl Adapter for KdeAdapter {
                 )]);
             }
 
-            // Enable
             let _ = kscreen_doctor(&[&format!("output.{}.enable", conn)]);
         }
 
@@ -107,4 +103,11 @@ fn kscreen_doctor(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn check_binary(name: &str) -> bool {
+    match std::process::Command::new("which").arg(name).output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
 }

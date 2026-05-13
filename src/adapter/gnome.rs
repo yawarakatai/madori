@@ -11,7 +11,11 @@ impl Adapter for GnomeAdapter {
     }
 
     fn apply(&self, layout: &ResolvedLayout) -> Result<(), Box<dyn std::error::Error>> {
-        // Apply virtual output first if present
+        if !check_binary("gnome-randr") {
+            warn!("gnome-randr not found in PATH; skipping application");
+            return Ok(());
+        }
+
         if let Some(ref v) = layout.virtual_output {
             self.apply_virtual_output(v)?;
         }
@@ -32,32 +36,20 @@ impl Adapter for GnomeAdapter {
                     .find(|m| m.monitor_name == *mirror_target)
                     .map(|m| m.connector_name.as_str())
                     .unwrap_or(mirror_target.as_str());
-                let _ = gnome_randr(&[
-                    "--output",
-                    conn,
-                    "--same-as",
-                    target_conn,
-                ]);
+                let _ = gnome_randr(&["--output", conn, "--same-as", target_conn]);
                 continue;
             }
 
-            // Set position
             let _ = gnome_randr(&[
-                "--output",
-                conn,
-                "--pos",
+                "--output", conn, "--pos",
                 &format!("{}x{}", monitor.x, monitor.y),
             ]);
 
-            // Set scale
             let _ = gnome_randr(&[
-                "--output",
-                conn,
-                "--scale",
+                "--output", conn, "--scale",
                 &format!("{:.3}", monitor.scale),
             ]);
 
-            // Set transform
             if monitor.transform != "normal" {
                 let gnome_transform = match monitor.transform.as_str() {
                     "left" => "left",
@@ -68,15 +60,12 @@ impl Adapter for GnomeAdapter {
                 let _ = gnome_randr(&["--output", conn, "--rotate", gnome_transform]);
             }
 
-            // Set mode
             if let Some(ref mode) = monitor.mode {
                 let mode_str = format!("{}x{}", mode.width, mode.height);
                 let _ = gnome_randr(&["--output", conn, "--mode", &mode_str]);
                 if mode.refresh != 60.0 {
                     let _ = gnome_randr(&[
-                        "--output",
-                        conn,
-                        "--rate",
+                        "--output", conn, "--rate",
                         &format!("{:.3}", mode.refresh),
                     ]);
                 }
@@ -102,9 +91,7 @@ impl GnomeAdapter {
 }
 
 fn gnome_randr(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new("gnome-randr")
-        .args(args)
-        .output()?;
+    let output = Command::new("gnome-randr").args(args).output()?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -113,12 +100,15 @@ fn gnome_randr(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "gnome-randr {} failed: {}",
-            args.join(" "),
-            stderr.trim()
-        );
+        warn!("gnome-randr {} failed: {}", args.join(" "), stderr.trim());
     }
 
     Ok(())
+}
+
+fn check_binary(name: &str) -> bool {
+    match std::process::Command::new("which").arg(name).output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
 }

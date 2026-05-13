@@ -35,6 +35,10 @@ pub struct Rule {
     pub layout: Option<HashMap<String, LayoutSpec>>,
     #[serde(default, rename = "virtual")]
     pub virtual_output: Option<VirtualSpec>,
+    #[serde(default)]
+    pub pre_hook: Option<String>,
+    #[serde(default)]
+    pub post_hook: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -223,5 +227,28 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         let layout = config.rules[0].layout.as_ref().unwrap();
         assert_eq!(layout["ally"].transform.as_deref(), Some("right"));
+    }
+
+    #[test]
+    fn parse_rule_with_hooks() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["ally"], "layout": { "ally": { "position": "0,0" } }, "pre_hook": "echo hello", "post_hook": "echo done" }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let rule = &config.rules[0];
+        assert_eq!(rule.pre_hook.as_deref(), Some("echo hello"));
+        assert_eq!(rule.post_hook.as_deref(), Some("echo done"));
+    }
+
+    #[test]
+    fn parse_hooks_default_to_none() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["ally"], "layout": { "ally": { "position": "0,0" } } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.rules[0].pre_hook, None);
+        assert_eq!(config.rules[0].post_hook, None);
     }
 }

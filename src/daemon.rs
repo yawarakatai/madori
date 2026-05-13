@@ -195,6 +195,12 @@ fn apply_layout(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let de = adapter::detect_current_de();
     info!("Detected desktop environment: {:?}", de);
 
+    // Run pre-hook if defined
+    if let Some(ref hook) = rule.pre_hook {
+        info!("Running pre-hook: {}", hook);
+        run_hook(hook);
+    }
+
     if let Some(adapter) = adapter::create_adapter(&de) {
         info!("Applying layout via {}", adapter.name());
         adapter.apply(&resolved)?;
@@ -203,5 +209,29 @@ fn apply_layout(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
         warn!("No adapter available for desktop environment {:?}", de);
     }
 
+    // Run post-hook if defined
+    if let Some(ref hook) = rule.post_hook {
+        info!("Running post-hook: {}", hook);
+        run_hook(hook);
+    }
+
     Ok(())
+}
+
+fn run_hook(cmd: &str) {
+    match std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .status()
+    {
+        Ok(status) if status.success() => {
+            info!("Hook succeeded: {}", cmd);
+        }
+        Ok(status) => {
+            warn!("Hook exited with {}: {}", status, cmd);
+        }
+        Err(e) => {
+            warn!("Hook failed to run ({}): {}", e, cmd);
+        }
+    }
 }

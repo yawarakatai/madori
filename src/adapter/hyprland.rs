@@ -11,10 +11,14 @@ impl Adapter for HyprlandAdapter {
     }
 
     fn apply(&self, layout: &ResolvedLayout) -> Result<(), Box<dyn std::error::Error>> {
+        if !check_binary("hyprctl") {
+            warn!("hyprctl not found in PATH; skipping application");
+            return Ok(());
+        }
+
         if let Some(ref v) = layout.virtual_output {
             let _ = hyprctl(&[
-                "keyword",
-                "monitor",
+                "keyword", "monitor",
                 &format!(
                     "HEADLESS-1,{}x{}@{},{},1,transform,0",
                     v.width, v.height, v.refresh as u32, "auto"
@@ -38,9 +42,7 @@ impl Adapter for HyprlandAdapter {
             };
 
             let pos_str = format!("{}x{}", monitor.x, monitor.y);
-
             let scale_str = format!("{:.2}", monitor.scale);
-
             let transform_num = match monitor.transform.as_str() {
                 "normal" => "0",
                 "left" => "1",
@@ -91,4 +93,11 @@ fn hyprctl(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn check_binary(name: &str) -> bool {
+    match std::process::Command::new("which").arg(name).output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
 }

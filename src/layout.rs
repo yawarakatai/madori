@@ -247,6 +247,8 @@ mod tests {
                 match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
                 layout,
                 virtual_output,
+                pre_hook: None,
+                post_hook: None,
             }
         }
     }
