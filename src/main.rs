@@ -28,6 +28,8 @@ enum Commands {
     Dump,
     /// Raw EDID info for all connected outputs (debug)
     Detect,
+    /// Human-readable display status
+    Status,
 }
 
 #[derive(Args)]
@@ -53,6 +55,7 @@ fn main() {
         }
         Commands::Dump => daemon::dump_state(cli.config.as_deref()),
         Commands::Detect => cmd_detect(),
+        Commands::Status => daemon::show_status(cli.config.as_deref()),
     };
 
     if let Err(e) = result {

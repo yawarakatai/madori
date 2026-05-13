@@ -7,7 +7,6 @@ use log::{debug, info, warn};
 use std::time::{Duration, SystemTime};
 
 const CONFIG_PATH: &str = "/etc/madori/config.json";
-const DEBOUNCE_MS: u64 = 300;
 
 pub fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
     info!("madori daemon starting");
@@ -75,7 +74,8 @@ pub fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
 
         // Check debounce
         if let Some(t) = last_event {
-            if t.elapsed() >= Duration::from_millis(DEBOUNCE_MS) {
+                let debounce = Duration::from_millis(config.debounce_ms);
+                if t.elapsed() >= debounce {
                 last_event = None;
                 info!("Applying layout due to display change");
                 if let Err(e) = apply_layout(&config) {
@@ -157,6 +157,98 @@ pub fn dump_state(config_path: Option<&str>) -> Result<(), Box<dyn std::error::E
 
     let json = serde_json::to_string_pretty(&dump)?;
     println!("{}", json);
+    Ok(())
+}
+
+pub fn show_status(config_path: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let path = config_path.unwrap_or(CONFIG_PATH);
+    let config = Config::load(path)?;
+    let connectors = detect::detect_connectors()?;
+    let matched = matcher::match_monitors(&config.monitors, &connectors);
+    let maybe_rule = matcher::match_rules(&config.rules, &matched, &connectors);
+
+    println!("Display Status");
+    println!("==============");
+
+    // List connected displays
+    let connected: Vec<_> = connectors.iter().filter(|c| c.connected).collect();
+    if connected.is_empty() {
+        println!("No displays connected");
+    } else {
+        for c in &connected {
+            let edid_info = c.edid.as_ref();
+            let model = edid_info.and_then(|e| e.model.as_deref()).unwrap_or("-");
+            let vendor = edid_info.and_then(|e| e.vendor.as_deref()).unwrap_or("-");
+            let preferred = edid_info.and_then(|e| e.preferred_mode.as_ref());
+
+            let monitor_name = matched.get(&c.name).map(|s| s.as_str()).unwrap_or("-");
+
+            println!("  {:<16} connected   model={:<16} vendor={:<6} matched={}",
+                c.name, model, vendor, monitor_name);
+
+            if let Some(m) = preferred {
+                println!("    preferred mode: {}x{}@{:.0}Hz", m.width, m.height, m.refresh);
+            }
+            if !c.modes.is_empty() {
+                let mut seen = std::collections::HashSet::new();
+                let unique_modes: Vec<String> = c.modes.iter()
+                    .filter_map(|m| {
+                        let s = format!("{}x{}@{:.0}", m.width, m.height, m.refresh);
+                        if seen.insert(s.clone()) { Some(s) } else { None }
+                    })
+                    .collect();
+                println!("    available: {}", unique_modes.join(", "));
+            }
+        }
+    }
+
+    // Show matched rule
+    println!();
+    match maybe_rule {
+        Some((idx, rule)) => {
+            println!("Matched rule #{}", idx);
+            if let Some(ref hooks) = rule.pre_hook {
+                println!("  pre-hook:  {}", hooks);
+            }
+            println!("  patterns:  {:?}", rule.match_patterns);
+
+            let wildcards = matcher::resolve_wildcards(&rule, &matched, &connectors);
+            let resolved = layout::resolve_layout(&config, &rule, &matched, &connectors, &wildcards);
+
+            if let Some(ref v) = resolved.virtual_output {
+                println!("  virtual:   {}x{}@{:.0}Hz", v.width, v.height, v.refresh);
+            }
+
+            println!();
+            println!("Resolved Layout");
+            println!("---------------");
+            for m in &resolved.monitors {
+                let status = if m.enabled { "on " } else { "off" };
+                let mirror = m.mirror.as_deref().unwrap_or("-");
+                let mode_str = m.mode.as_ref()
+                    .map(|mode| format!("{}x{}@{:.0}", mode.width, mode.height, mode.refresh))
+                    .unwrap_or_else(|| "auto".to_string());
+                println!(
+                    "  {}  {:<16} pos={:>5},{:<5} scale={:<4} transform={:<8} mirror={:<6} mode={}",
+                    status, m.monitor_name,
+                    m.x, m.y,
+                    m.scale,
+                    m.transform,
+                    mirror,
+                    mode_str,
+                );
+            }
+
+            if let Some(ref hooks) = rule.post_hook {
+                println!();
+                println!("  post-hook: {}", hooks);
+            }
+        }
+        None => {
+            println!("No rule matched. Current layout is preserved.");
+        }
+    }
+
     Ok(())
 }
 

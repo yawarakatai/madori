@@ -5,6 +5,12 @@ use std::collections::HashMap;
 pub struct Config {
     pub monitors: HashMap<String, MonitorDefinition>,
     pub rules: Vec<Rule>,
+    #[serde(default = "default_debounce")]
+    pub debounce_ms: u64,
+}
+
+fn default_debounce() -> u64 {
+    300
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -250,5 +256,26 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.rules[0].pre_hook, None);
         assert_eq!(config.rules[0].post_hook, None);
+    }
+
+    #[test]
+    fn parse_debounce_ms_default() {
+        let json = r#"{
+            "monitors": {},
+            "rules": []
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.debounce_ms, 300);
+    }
+
+    #[test]
+    fn parse_debounce_ms_custom() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [],
+            "debounce_ms": 500
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.debounce_ms, 500);
     }
 }

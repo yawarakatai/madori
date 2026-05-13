@@ -43,6 +43,7 @@
 
       flake = {
         nixosModules.default = ./nix/module.nix;
+        lib = import ./lib/madori.nix { lib = nixpkgs.lib; };
       };
     };
 }

@@ -26,10 +26,10 @@ in
       description = "Ordered list of match rules";
     };
 
-    configPath = mkOption {
-      type = types.path;
-      default = "/etc/madori/config.json";
-      description = "Path to generated config.json";
+    debounceMs = mkOption {
+      type = types.int;
+      default = 300;
+      description = "Debounce time in milliseconds for udev events";
     };
   };
 
@@ -38,6 +38,7 @@ in
       text = builtins.toJSON {
         monitors = cfg.monitors;
         rules = cfg.rules;
+        debounce_ms = cfg.debounceMs;
       };
       mode = "0444";
     };

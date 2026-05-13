@@ -253,6 +253,10 @@ mod tests {
         }
     }
 
+    fn cfg() -> Config {
+        Config { monitors: HashMap::new(), rules: vec![], debounce_ms: 300 }
+    }
+
     fn conn(name: &str, modes: Vec<(u32, u32)>) -> ConnectorInfo {
         ConnectorInfo {
             name: name.to_string(),
@@ -271,7 +275,7 @@ mod tests {
 
     #[test]
     fn manual_position_single_monitor() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), ls("0,0"))])),
@@ -288,7 +292,7 @@ mod tests {
 
     #[test]
     fn manual_position_custom_coords() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["innocn"],
             Some(HashMap::from([("innocn".into(), ls("1920,50"))])),
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn auto_position_packs_left_to_right() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally", "innocn"],
             Some(HashMap::from([
@@ -331,7 +335,7 @@ mod tests {
 
     #[test]
     fn auto_position_respects_custom_y() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally", "innocn"],
             Some(HashMap::from([
@@ -364,6 +368,7 @@ mod tests {
                 },
             )]),
             rules: vec![],
+            debounce_ms: 300,
         };
         let rule = CfgRule::new(
             vec!["ally"],
@@ -387,6 +392,7 @@ mod tests {
                 },
             )]),
             rules: vec![],
+            debounce_ms: 300,
         };
         let rule = CfgRule::new(
             vec!["ally"],
@@ -405,7 +411,7 @@ mod tests {
 
     #[test]
     fn default_scale_is_one() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), ls("0,0"))])),
@@ -419,7 +425,7 @@ mod tests {
 
     #[test]
     fn default_transform_is_normal() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), ls("0,0"))])),
@@ -433,7 +439,7 @@ mod tests {
 
     #[test]
     fn transform_passed_through() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), {
@@ -451,7 +457,7 @@ mod tests {
 
     #[test]
     fn mirror_assignment() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally", "_"],
             Some(HashMap::from([
@@ -478,7 +484,7 @@ mod tests {
 
     #[test]
     fn default_enabled_is_true() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), ls("0,0"))])),
@@ -492,7 +498,7 @@ mod tests {
 
     #[test]
     fn explicit_disabled() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["innocn"],
             Some(HashMap::from([("innocn".into(), {
@@ -510,7 +516,7 @@ mod tests {
 
     #[test]
     fn explicit_enabled_true() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), {
@@ -528,7 +534,7 @@ mod tests {
 
     #[test]
     fn explicit_mode_overrides_detected() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["innocn"],
             Some(HashMap::from([("innocn".into(), {
@@ -549,7 +555,7 @@ mod tests {
 
     #[test]
     fn mode_defaults_to_first_detected() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), ls("0,0"))])),
@@ -565,7 +571,7 @@ mod tests {
 
     #[test]
     fn mode_without_refresh_defaults_to_60() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), {
@@ -586,7 +592,7 @@ mod tests {
 
     #[test]
     fn virtual_output_passed_through() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["*"],
             None,
@@ -601,7 +607,7 @@ mod tests {
 
     #[test]
     fn no_virtual_when_rule_has_none() {
-        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let config = cfg();
         let rule = CfgRule::new(
             vec!["ally"],
             Some(HashMap::from([("ally".into(), ls("0,0"))])),
