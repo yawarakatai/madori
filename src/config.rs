@@ -47,6 +47,8 @@ pub struct LayoutSpec {
     pub transform: Option<String>,
     #[serde(default)]
     pub mirror: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -175,6 +177,28 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         let layout = config.rules[0].layout.as_ref().unwrap();
         assert_eq!(layout["$1"].mirror.as_deref(), Some("ally"));
+    }
+
+    #[test]
+    fn parse_layout_with_disabled() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["innocn"], "layout": { "innocn": { "position": "0,0", "enabled": false } } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let layout = config.rules[0].layout.as_ref().unwrap();
+        assert_eq!(layout["innocn"].enabled, Some(false));
+    }
+
+    #[test]
+    fn parse_layout_enabled_defaults_to_none() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["ally"], "layout": { "ally": { "position": "0,0" } } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let layout = config.rules[0].layout.as_ref().unwrap();
+        assert_eq!(layout["ally"].enabled, None);
     }
 
     #[test]

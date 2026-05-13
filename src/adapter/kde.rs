@@ -25,6 +25,12 @@ impl Adapter for KdeAdapter {
         for monitor in &layout.monitors {
             let conn = &monitor.connector_name;
 
+            if !monitor.enabled {
+                info!("Disabling output {}", conn);
+                let _ = kscreen_doctor(&[&format!("output.{}.disable", conn)]);
+                continue;
+            }
+
             if let Some(ref mirror_target) = monitor.mirror {
                 let target_conn = layout
                     .monitors

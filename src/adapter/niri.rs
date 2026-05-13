@@ -17,6 +17,14 @@ impl Adapter for NiriAdapter {
         }
 
         for monitor in &layout.monitors {
+            let conn = &monitor.connector_name;
+
+            if !monitor.enabled {
+                info!("Disabling output {}", conn);
+                let _ = niri_msg(&["output", conn, "off"]);
+                continue;
+            }
+
             if monitor.mirror.is_some() {
                 warn!(
                     "niri does not support monitor mirroring; skipping mirror for {}",
@@ -24,8 +32,6 @@ impl Adapter for NiriAdapter {
                 );
                 continue;
             }
-
-            let conn = &monitor.connector_name;
 
             // Set mode (preferred mode closest to desired refresh)
             if let Some(ref mode) = monitor.mode {

@@ -18,6 +18,7 @@ pub struct ResolvedMonitor {
     pub transform: String,
     pub mirror: Option<String>,
     pub mode: Option<VideoMode>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +123,7 @@ pub fn resolve_layout(
                 .unwrap_or_else(|| "normal".to_string());
             let mirror = spec.mirror.clone();
             let mode = get_mode_for_monitor(name, connectors, matched, wildcard_assignments);
+            let enabled = spec.enabled.unwrap_or(true);
 
             resolved_monitors.push(ResolvedMonitor {
                 monitor_name: name.clone(),
@@ -132,6 +134,7 @@ pub fn resolve_layout(
                 transform,
                 mirror,
                 mode,
+                enabled,
             });
         }
     }
@@ -241,7 +244,7 @@ mod tests {
     }
 
     fn ls(pos: &str) -> CfgLayoutSpec {
-        CfgLayoutSpec { position: Some(pos.to_string()), scale: None, transform: None, mirror: None }
+        CfgLayoutSpec { position: Some(pos.to_string()), scale: None, transform: None, mirror: None, enabled: None }
     }
 
     #[test]
@@ -449,6 +452,56 @@ mod tests {
         let mirror_monitor = resolved.monitors.iter().find(|m| m.monitor_name == "$1").unwrap();
         assert_eq!(mirror_monitor.mirror.as_deref(), Some("ally"));
         assert_eq!(mirror_monitor.connector_name, "HDMI-A-1");
+    }
+
+    #[test]
+    fn default_enabled_is_true() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert!(resolved.monitors[0].enabled);
+    }
+
+    #[test]
+    fn explicit_disabled() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["innocn"],
+            Some(HashMap::from([("innocn".into(), {
+                let mut l = ls("0,0");
+                l.enabled = Some(false);
+                l
+            })])),
+            None,
+        );
+        let matched = HashMap::from([("HDMI-A-1".into(), "innocn".to_string())]);
+        let connectors = vec![conn("HDMI-A-1", vec![(3840, 2160)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert!(!resolved.monitors[0].enabled);
+    }
+
+    #[test]
+    fn explicit_enabled_true() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), {
+                let mut l = ls("0,0");
+                l.enabled = Some(true);
+                l
+            })])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        assert!(resolved.monitors[0].enabled);
     }
 
     #[test]

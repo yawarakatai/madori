@@ -25,6 +25,12 @@ impl Adapter for HyprlandAdapter {
         for monitor in &layout.monitors {
             let conn = &monitor.connector_name;
 
+            if !monitor.enabled {
+                info!("Disabling output {}", conn);
+                let _ = hyprctl(&["keyword", "monitor", &format!("{},disable", conn)]);
+                continue;
+            }
+
             let mode_str = if let Some(ref mode) = monitor.mode {
                 format!("{}x{}@{:.0}", mode.width, mode.height, mode.refresh)
             } else {

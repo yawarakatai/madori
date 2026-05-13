@@ -19,6 +19,12 @@ impl Adapter for GnomeAdapter {
         for monitor in &layout.monitors {
             let conn = &monitor.connector_name;
 
+            if !monitor.enabled {
+                info!("Disabling output {}", conn);
+                let _ = gnome_randr(&["--output", conn, "--off"]);
+                continue;
+            }
+
             if let Some(ref mirror_target) = monitor.mirror {
                 let target_conn = layout
                     .monitors

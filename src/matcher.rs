@@ -406,7 +406,7 @@ mod tests {
     }
 
     fn layout_spec(position: &str) -> LayoutSpec {
-        LayoutSpec { position: Some(position.to_string()), scale: None, transform: None, mirror: None }
+        LayoutSpec { position: Some(position.to_string()), scale: None, transform: None, mirror: None, enabled: None }
     }
 
     #[test]
