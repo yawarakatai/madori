@@ -4,7 +4,7 @@ use crate::detect;
 use crate::layout;
 use crate::matcher;
 use log::{debug, info, warn};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const CONFIG_PATH: &str = "/etc/madori/config.json";
 const DEBOUNCE_MS: u64 = 300;
@@ -12,13 +12,14 @@ const DEBOUNCE_MS: u64 = 300;
 pub fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
     info!("madori daemon starting");
 
-    let config = match Config::load(CONFIG_PATH) {
+    let mut config = match load_config() {
         Ok(c) => c,
         Err(e) => {
-            warn!("Failed to load config from {}: {}", CONFIG_PATH, e);
+            warn!("Failed to load config: {}", e);
             return Err(e);
         }
     };
+    let mut config_mtime = get_config_mtime();
 
     // Apply initial layout
     if let Err(e) = apply_layout(&config) {
@@ -31,6 +32,24 @@ pub fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_event: Option<std::time::Instant> = None;
 
     loop {
+        // Check for config file changes
+        let new_mtime = get_config_mtime();
+        if new_mtime != config_mtime {
+            info!("Config file changed, reloading");
+            match load_config() {
+                Ok(new_config) => {
+                    config = new_config;
+                    config_mtime = new_mtime;
+                    if let Err(e) = apply_layout(&config) {
+                        warn!("Layout re-application after config change failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to reload config: {}", e);
+                }
+            }
+        }
+
         // Drain all available udev events (non-blocking)
         let mut got_event = false;
         for event in monitor.iter() {
@@ -67,6 +86,14 @@ pub fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
 
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
+    Config::load(CONFIG_PATH)
+}
+
+fn get_config_mtime() -> Option<SystemTime> {
+    std::fs::metadata(CONFIG_PATH).ok().and_then(|m| m.modified().ok())
 }
 
 pub fn apply_once(config_path: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {

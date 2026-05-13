@@ -124,7 +124,11 @@ pub fn resolve_layout(
                 .clone()
                 .unwrap_or_else(|| "normal".to_string());
             let mirror = spec.mirror.clone();
-            let mode = get_mode_for_monitor(name, connectors, matched, wildcard_assignments);
+            let mode = spec
+                .mode
+                .as_deref()
+                .and_then(parse_mode_string)
+                .or_else(|| get_mode_for_monitor(name, connectors, matched, wildcard_assignments));
             let enabled = spec.enabled.unwrap_or(true);
 
             resolved_monitors.push(ResolvedMonitor {
@@ -214,6 +218,20 @@ fn get_mode_for_monitor(
         .and_then(|c| c.modes.first().cloned())
 }
 
+fn parse_mode_string(s: &str) -> Option<VideoMode> {
+    let (wh, refresh) = if let Some((wh, r)) = s.split_once('@') {
+        (wh, r.parse::<f64>().ok()?)
+    } else {
+        (s, 60.0)
+    };
+    let (w, h) = wh.split_once('x')?;
+    Some(VideoMode {
+        width: w.parse().ok()?,
+        height: h.parse().ok()?,
+        refresh,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,7 +264,7 @@ mod tests {
     }
 
     fn ls(pos: &str) -> CfgLayoutSpec {
-        CfgLayoutSpec { position: Some(pos.to_string()), scale: None, transform: None, mirror: None, enabled: None }
+        CfgLayoutSpec { position: Some(pos.to_string()), scale: None, transform: None, mirror: None, enabled: None, mode: None }
     }
 
     #[test]
@@ -504,6 +522,64 @@ mod tests {
         let connectors = vec![conn("eDP-1", vec![(1920, 1080)])];
         let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
         assert!(resolved.monitors[0].enabled);
+    }
+
+    #[test]
+    fn explicit_mode_overrides_detected() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["innocn"],
+            Some(HashMap::from([("innocn".into(), {
+                let mut l = ls("0,0");
+                l.mode = Some("2560x1440@144".into());
+                l
+            })])),
+            None,
+        );
+        let matched = HashMap::from([("HDMI-A-1".into(), "innocn".to_string())]);
+        let connectors = vec![conn("HDMI-A-1", vec![(3840, 2160), (2560, 1440)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        let mode = resolved.monitors[0].mode.as_ref().unwrap();
+        assert_eq!(mode.width, 2560);
+        assert_eq!(mode.height, 1440);
+        assert!((mode.refresh - 144.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn mode_defaults_to_first_detected() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), ls("0,0"))])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(1920, 1080), (1280, 720)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        let mode = resolved.monitors[0].mode.as_ref().unwrap();
+        assert_eq!(mode.width, 1920);
+        assert_eq!(mode.height, 1080);
+    }
+
+    #[test]
+    fn mode_without_refresh_defaults_to_60() {
+        let config = Config { monitors: HashMap::new(), rules: vec![] };
+        let rule = CfgRule::new(
+            vec!["ally"],
+            Some(HashMap::from([("ally".into(), {
+                let mut l = ls("0,0");
+                l.mode = Some("1920x1080".into());
+                l
+            })])),
+            None,
+        );
+        let matched = HashMap::from([("eDP-1".into(), "ally".to_string())]);
+        let connectors = vec![conn("eDP-1", vec![(3840, 2160)])];
+        let resolved = resolve_layout(&config, &rule, &matched, &connectors, &HashMap::new());
+        let mode = resolved.monitors[0].mode.as_ref().unwrap();
+        assert_eq!(mode.width, 1920);
+        assert_eq!(mode.height, 1080);
+        assert!((mode.refresh - 60.0).abs() < 1.0);
     }
 
     #[test]

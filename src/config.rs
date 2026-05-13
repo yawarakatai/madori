@@ -49,6 +49,8 @@ pub struct LayoutSpec {
     pub mirror: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -199,6 +201,17 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         let layout = config.rules[0].layout.as_ref().unwrap();
         assert_eq!(layout["ally"].enabled, None);
+    }
+
+    #[test]
+    fn parse_layout_with_mode() {
+        let json = r#"{
+            "monitors": {},
+            "rules": [{ "match": ["innocn"], "layout": { "innocn": { "position": "0,0", "mode": "3840x2160@144" } } }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let layout = config.rules[0].layout.as_ref().unwrap();
+        assert_eq!(layout["innocn"].mode.as_deref(), Some("3840x2160@144"));
     }
 
     #[test]
