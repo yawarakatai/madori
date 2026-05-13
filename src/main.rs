@@ -5,7 +5,7 @@ mod detect;
 mod layout;
 mod matcher;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "madori", version, about = "Intelligent display layout manager")]
@@ -23,11 +23,18 @@ enum Commands {
     /// Run as udev-watching daemon
     Daemon,
     /// Detect current state and apply layout once
-    Apply,
+    Apply(ApplyArgs),
     /// Output current connection state + match result as JSON
     Dump,
     /// Raw EDID info for all connected outputs (debug)
     Detect,
+}
+
+#[derive(Args)]
+struct ApplyArgs {
+    /// Show what would be applied without actually changing anything
+    #[arg(long)]
+    dry_run: bool,
 }
 
 fn main() {
@@ -37,7 +44,13 @@ fn main() {
 
     let result = match cli.command {
         Commands::Daemon => daemon::run_daemon(),
-        Commands::Apply => daemon::apply_once(cli.config.as_deref()),
+        Commands::Apply(args) => {
+            if args.dry_run {
+                daemon::apply_dry_run(cli.config.as_deref())
+            } else {
+                daemon::apply_once(cli.config.as_deref())
+            }
+        }
         Commands::Dump => daemon::dump_state(cli.config.as_deref()),
         Commands::Detect => cmd_detect(),
     };

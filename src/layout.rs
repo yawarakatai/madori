@@ -2,13 +2,15 @@ use crate::config::{Config, LayoutSpec, Rule};
 use crate::detect::{ConnectorInfo, VideoMode};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ResolvedLayout {
     pub monitors: Vec<ResolvedMonitor>,
     pub virtual_output: Option<VirtualOutput>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ResolvedMonitor {
     pub monitor_name: String,
     pub connector_name: String,
@@ -21,7 +23,7 @@ pub struct ResolvedMonitor {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VirtualOutput {
     pub width: u32,
     pub height: u32,

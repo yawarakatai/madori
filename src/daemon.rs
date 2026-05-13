@@ -75,6 +75,45 @@ pub fn apply_once(config_path: Option<&str>) -> Result<(), Box<dyn std::error::E
     apply_layout(&config)
 }
 
+pub fn apply_dry_run(config_path: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let path = config_path.unwrap_or(CONFIG_PATH);
+    let config = Config::load(path)?;
+
+    let connectors = detect::detect_connectors()?;
+    let matched = matcher::match_monitors(&config.monitors, &connectors);
+    let maybe_rule = matcher::match_rules(&config.rules, &matched, &connectors);
+
+    let de = adapter::detect_current_de();
+    let adapter_name = adapter::create_adapter(&de)
+        .map(|a| a.name().to_string());
+
+    let resolved = maybe_rule.as_ref().map(|(_, rule)| {
+        let wildcards = matcher::resolve_wildcards(rule, &matched, &connectors);
+        layout::resolve_layout(&config, rule, &matched, &connectors, &wildcards)
+    });
+
+    let dry_run = DryRunOutput {
+        desktop_environment: format!("{:?}", de),
+        adapter: adapter_name.as_deref(),
+        matched_rule_index: maybe_rule.as_ref().map(|(i, _)| *i),
+        would_apply: maybe_rule.is_some(),
+        resolved_layout: resolved.as_ref(),
+    };
+
+    let json = serde_json::to_string_pretty(&dry_run)?;
+    println!("{}", json);
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct DryRunOutput<'a> {
+    desktop_environment: String,
+    adapter: Option<&'a str>,
+    matched_rule_index: Option<usize>,
+    would_apply: bool,
+    resolved_layout: Option<&'a layout::ResolvedLayout>,
+}
+
 pub fn dump_state(config_path: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let path = config_path.unwrap_or(CONFIG_PATH);
     let config = Config::load(path)?;
