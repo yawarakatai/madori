@@ -56,11 +56,6 @@ in
         Restart = "on-failure";
         RestartSec = 5;
       };
-
-      environment = {
-        PATH = "%E/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin:/run/wrappers/bin";
-        XDG_RUNTIME_DIR = "/run/user/%U";
-      };
     };
   };
 }
