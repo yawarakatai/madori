@@ -16,6 +16,7 @@ pub struct EdidInfo {
     pub serial: Option<String>,
     pub display_size_mm: Option<(u32, u32)>,
     pub preferred_mode: Option<VideoMode>,
+    pub all_modes: Vec<VideoMode>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -77,7 +78,13 @@ pub fn detect_connectors() -> Result<Vec<ConnectorInfo>, Box<dyn std::error::Err
 
         let modes = if connected {
             let modes_path = entry.path().join("modes");
-            read_modes(&modes_path)
+            let raw_modes = read_modes(&modes_path);
+            // Enrich with refresh rates from EDID detailed timings
+            if let Some(ref edid) = edid {
+                enrich_modes_with_edid(raw_modes, edid)
+            } else {
+                raw_modes
+            }
         } else {
             Vec::new()
         };
@@ -208,8 +215,208 @@ fn parse_edid(data: &[u8]) -> Option<EdidInfo> {
         vendor,
         serial,
         display_size_mm,
-        preferred_mode,
+        preferred_mode: preferred_mode.clone(),
+        all_modes: parse_all_detailed_timings(data),
     })
+}
+
+fn vic_to_mode(vic: u8) -> Option<VideoMode> {
+    // CEA-861 VIC lookup table for common modes
+    match vic {
+        1 => Some((640, 480, 60.0)),
+        2 | 3 => Some((720, 480, 60.0)),
+        4 => Some((1280, 720, 60.0)),
+        5 => Some((1920, 1080, 60.0)), // 1080i
+        6 | 7 => Some((1440, 480, 60.0)), // 480i
+        14 | 15 => Some((1440, 480, 60.0)),
+        16 => Some((1920, 1080, 60.0)),
+        17 => Some((720, 576, 50.0)),
+        18 => Some((720, 576, 50.0)),
+        19 => Some((1280, 720, 50.0)),
+        20 => Some((1920, 1080, 50.0)),
+        21 | 22 => Some((1440, 576, 50.0)),
+        31 => Some((1920, 1080, 50.0)),
+        32 => Some((1920, 1080, 24.0)),
+        33 => Some((1920, 1080, 25.0)),
+        34 => Some((1920, 1080, 30.0)),
+        60 => Some((1280, 720, 24.0)),
+        61 => Some((1280, 720, 25.0)),
+        62 => Some((1280, 720, 30.0)),
+        63 | 64 => Some((1920, 1080, 120.0)),
+        93 => Some((3840, 2160, 24.0)),
+        94 => Some((3840, 2160, 25.0)),
+        95 => Some((3840, 2160, 30.0)),
+        96 => Some((3840, 2160, 50.0)),
+        97 | 98 => Some((3840, 2160, 60.0)),
+        99 | 100 => Some((4096, 2160, 60.0)),
+        101 => Some((4096, 2160, 50.0)),
+        102 => Some((3840, 2160, 48.0)),
+        103 => Some((3840, 2160, 48.0)), // 47.95
+        104 => Some((3840, 2160, 100.0)),
+        105 => Some((3840, 2160, 100.0)),
+        106 | 107 => Some((3840, 2160, 120.0)),
+        108 | 109 => Some((3840, 2160, 144.0)),
+        112 | 113 => Some((3840, 2160, 120.0)), // 119.88/120
+        114 | 115 => Some((3840, 2160, 100.0)),
+        116 | 117 => Some((3840, 2160, 144.0)),
+        118 | 119 => Some((3840, 2160, 120.0)),
+        _ => None,
+    }
+    .map(|(w, h, r)| VideoMode {
+        width: w,
+        height: h,
+        refresh: r,
+    })
+    .filter(|m| m.width >= 640 && m.height >= 480 && m.refresh > 0.0)
+}
+
+fn parse_cea_video_data_block(data: &[u8], start: usize, end: usize) -> Vec<VideoMode> {
+    let mut modes = Vec::new();
+    let mut offset = start;
+
+    while offset < end {
+        if offset >= data.len() {
+            break;
+        }
+        let header = data[offset];
+        let tag = (header >> 5) & 0x07;
+        let len = (header & 0x1F) as usize;
+        offset += 1;
+
+        if tag == 0x02 && offset + len <= end {
+            // Video data block: each byte is a VIC
+            for i in 0..len {
+                if offset + i < data.len() {
+                    if let Some(mode) = vic_to_mode(data[offset + i]) {
+                        modes.push(mode);
+                    }
+                }
+            }
+            offset += len;
+        } else if tag == 0x07 {
+            // Extended tag: skip extended tag byte + data
+            if offset + 1 + len <= end && offset < data.len() {
+                // offset points to extended tag byte
+                offset += 1 + len;
+            } else {
+                offset += len;
+            }
+        } else {
+            offset += len;
+        }
+    }
+
+    modes
+}
+
+fn parse_all_detailed_timings(data: &[u8]) -> Vec<VideoMode> {
+    let mut modes = Vec::new();
+
+    // Parse DTDs from base EDID block (bytes 54-125, four 18-byte slots)
+    modes.extend(parse_dtds_from_range(data, 54, 126));
+
+    // Parse extension blocks
+    let num_extensions = data.get(126).copied().unwrap_or(0) as usize;
+    for ext_idx in 0..num_extensions {
+        let ext_start = 128 * (ext_idx + 1);
+        if ext_start + 128 > data.len() {
+            break;
+        }
+
+        match data[ext_start] {
+            0x02 => {
+                // CEA-861 extension: parse VICs from video data block
+                if ext_start + 4 < data.len() {
+                    let dtd_offset = data[ext_start + 2] as usize;
+                    // Data block collection: bytes 4..dtd_offset
+                    let dbc_end = ext_start + dtd_offset.min(128);
+                    modes.extend(parse_cea_video_data_block(data, ext_start + 4, dbc_end));
+                }
+                // Parse DTDs starting at dtd_offset
+                if ext_start + 3 < data.len() {
+                    let dtd_offset = data[ext_start + 2] as usize;
+                    if dtd_offset >= 4 && dtd_offset < 128 {
+                        let dtd_start = ext_start + dtd_offset;
+                        if dtd_start < ext_start + 128 {
+                            modes.extend(parse_dtds_from_range(
+                                data,
+                                dtd_start,
+                                ext_start + 128,
+                            ));
+                        }
+                    }
+                }
+            }
+            0x70 | 0x71 => {
+                // DisplayID: parse type 0x03 timing descriptors
+                // DisplayID v1.x: byte 1 = revision, byte 2 = section count
+                // Section type 0x03 = detailed timing
+                modes.extend(parse_displayid_timings(data, ext_start));
+            }
+            _ => {}
+        }
+    }
+
+    modes
+}
+
+fn parse_displayid_timings(data: &[u8], block_start: usize) -> Vec<VideoMode> {
+    let mut modes = Vec::new();
+    if block_start + 5 > data.len() {
+        return modes;
+    }
+    let num_sections = data[block_start + 2] as usize;
+    let mut offset = block_start + 5;
+
+    for _ in 0..num_sections {
+        if offset + 4 > data.len() {
+            break;
+        }
+        let tag = data[offset];
+        let section_len = data[offset + 3] as usize;
+        offset += 4;
+
+        if tag == 0x03 && offset + section_len <= data.len() {
+            let section_data = &data[offset..offset + section_len];
+            modes.extend(parse_dtds_from_range(section_data, 0, section_len));
+        }
+        offset += section_len;
+    }
+    modes
+}
+
+fn parse_dtds_from_range(data: &[u8], start: usize, end: usize) -> Vec<VideoMode> {
+    let mut modes = Vec::new();
+    let mut offset = start;
+
+    while offset + 18 <= end {
+        let pixel_clock = u16::from_le_bytes([data[offset], data[offset + 1]]);
+
+        if pixel_clock > 0 {
+            let ha =
+                (data[offset + 2] as u32) | (((data[offset + 4] as u32) >> 4) << 8);
+            let hbl =
+                (data[offset + 3] as u32) | (((data[offset + 4] as u32) & 0x0F) << 8);
+            let va =
+                (data[offset + 5] as u32) | (((data[offset + 7] as u32) >> 4) << 8);
+            let vbl =
+                (data[offset + 6] as u32) | (((data[offset + 7] as u32) & 0x0F) << 8);
+            let h_total = ha + hbl;
+            let v_total = va + vbl;
+            if h_total > 0 && v_total > 0 {
+                let refresh =
+                    (pixel_clock as f64 * 10_000.0) / (h_total as f64 * v_total as f64);
+                modes.push(VideoMode {
+                    width: ha,
+                    height: va,
+                    refresh,
+                });
+            }
+        }
+        offset += 18;
+    }
+
+    modes
 }
 
 fn read_modes(path: &Path) -> Vec<VideoMode> {
@@ -229,12 +436,61 @@ fn read_modes(path: &Path) -> Vec<VideoMode> {
                 modes.push(VideoMode {
                     width,
                     height,
-                    refresh: 60.0, // Default; will be updated from EDID
+                    refresh: 60.0,
                 });
             }
         }
     }
     modes
+}
+
+fn enrich_modes_with_edid(sys_modes: Vec<VideoMode>, edid: &EdidInfo) -> Vec<VideoMode> {
+    let mut result = Vec::new();
+    let mut used_edid_modes: Vec<bool> = vec![false; edid.all_modes.len()];
+
+    for sys_mode in &sys_modes {
+        // Try to find a matching EDID detailed timing with same resolution
+        let mut best_refresh = 60.0;
+        for (i, edid_mode) in edid.all_modes.iter().enumerate() {
+            if edid_mode.width == sys_mode.width
+                && edid_mode.height == sys_mode.height
+                && !used_edid_modes[i]
+            {
+                best_refresh = edid_mode.refresh;
+                used_edid_modes[i] = true;
+                break;
+            }
+        }
+        // If no EDID match, try matching with any EDID timing (reuse)
+        if best_refresh == 60.0 {
+            for edid_mode in &edid.all_modes {
+                if edid_mode.width == sys_mode.width && edid_mode.height == sys_mode.height {
+                    best_refresh = edid_mode.refresh;
+                    break;
+                }
+            }
+        }
+        result.push(VideoMode {
+            width: sys_mode.width,
+            height: sys_mode.height,
+            refresh: best_refresh,
+        });
+    }
+
+    // Add any EDID modes not covered by sysfs modes
+    for (i, edid_mode) in edid.all_modes.iter().enumerate() {
+        if !used_edid_modes[i]
+            && !result.iter().any(|m| {
+                m.width == edid_mode.width
+                    && m.height == edid_mode.height
+                    && (m.refresh - edid_mode.refresh).abs() < 1.0
+            })
+        {
+            result.push(edid_mode.clone());
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]

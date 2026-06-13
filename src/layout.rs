@@ -215,7 +215,18 @@ fn get_mode_for_monitor(
     connectors
         .iter()
         .find(|c| c.name == connector_name)
-        .and_then(|c| c.modes.first().cloned())
+        .and_then(|c| {
+            // Pick mode with highest refresh rate for the highest resolution
+            c.modes
+                .iter()
+                .max_by(|a, b| {
+                    a.width
+                        .cmp(&b.width)
+                        .then(a.height.cmp(&b.height))
+                        .then(a.refresh.partial_cmp(&b.refresh).unwrap_or(std::cmp::Ordering::Equal))
+                })
+                .cloned()
+        })
 }
 
 fn parse_mode_string(s: &str) -> Option<VideoMode> {

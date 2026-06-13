@@ -260,6 +260,7 @@ mod tests {
                 serial: serial.map(|s| s.to_string()),
                 display_size_mm: None,
                 preferred_mode: None,
+                all_modes: vec![],
             })
         } else {
             None
